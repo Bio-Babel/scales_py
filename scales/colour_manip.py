@@ -246,7 +246,11 @@ def alpha(
     result = []
     for c, a in zip(colours, alphas):
         rgba = to_rgba(c)
-        new_alpha = rgba[3] if a is None else float(a)
+        # R semantics: NA alpha keeps the original colour's alpha
+        if a is None or (isinstance(a, float) and np.isnan(a)):
+            new_alpha = rgba[3]
+        else:
+            new_alpha = float(a)
         result.append(to_hex((*rgba[:3], new_alpha), keep_alpha=True))
 
     return result[0] if scalar_input and isinstance(alpha_value, (int, float)) else result
