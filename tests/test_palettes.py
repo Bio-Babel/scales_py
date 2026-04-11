@@ -167,7 +167,8 @@ class TestPalShape:
 
     def test_known_values(self):
         p = scales.pal_shape()
-        assert p(3) == [0, 1, 2]
+        # R default: c(16, 17, 15) = filled circle, triangle, square
+        assert p(3) == [16, 17, 15]
 
 
 # ---------------------------------------------------------------------------

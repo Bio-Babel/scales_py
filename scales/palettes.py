@@ -749,10 +749,13 @@ def pal_shape(solid: bool = True) -> DiscretePalette:
     -------
     DiscretePalette
     """
+    # R default shapes: c(16, 17, 15, 3, 7, 8) when solid=TRUE
+    # 16=filled circle, 17=filled triangle, 15=filled square,
+    # 3=plus, 7=square cross, 8=asterisk
     if solid:
-        shapes = [0, 1, 2, 3, 4, 5]
+        shapes = [16, 17, 15, 3, 7, 8]
     else:
-        shapes = [0, 1, 2, 15, 16, 17, 18]
+        shapes = [0, 1, 2, 5, 6, 16, 17]
 
     max_n = len(shapes)
 
