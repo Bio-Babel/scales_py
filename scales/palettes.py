@@ -523,22 +523,11 @@ def pal_brewer(
     -------
     DiscretePalette
     """
-    import matplotlib.pyplot as plt
+    from ._palettes_data import BREWER, BREWER_MAXCOLORS, BREWER_TYPES
 
     _TYPE_PALETTES: dict[str, list[str]] = {
-        "seq": [
-            "Blues", "Greens", "Greys", "Oranges", "Purples", "Reds",
-            "BuGn", "BuPu", "GnBu", "OrRd", "PuBu", "PuBuGn",
-            "PuRd", "RdPu", "YlGn", "YlGnBu", "YlOrBr", "YlOrRd",
-        ],
-        "div": [
-            "BrBG", "PiYG", "PRGn", "PuOr", "RdBu", "RdGy",
-            "RdYlBu", "RdYlGn", "Spectral",
-        ],
-        "qual": [
-            "Accent", "Dark2", "Paired", "Pastel1", "Pastel2",
-            "Set1", "Set2", "Set3",
-        ],
+        t: [k for k, v in sorted(BREWER_TYPES.items()) if v == t]
+        for t in ("seq", "div", "qual")
     }
 
     if isinstance(palette, int):
@@ -548,45 +537,22 @@ def pal_brewer(
     else:
         cmap_name = palette
 
-    # R: nlevels <- RColorBrewer::brewer.pal.info[pal, "maxcolors"]
-    _BREWER_MAXCOLORS: dict[str, int] = {
-        "Blues": 9, "BuGn": 9, "BuPu": 9, "GnBu": 9, "Greens": 9,
-        "Greys": 9, "Oranges": 9, "OrRd": 9, "PuBu": 9, "PuBuGn": 9,
-        "PuRd": 9, "Purples": 9, "RdPu": 9, "Reds": 9, "YlGn": 9,
-        "YlGnBu": 9, "YlOrBr": 9, "YlOrRd": 9,
-        "BrBG": 11, "PiYG": 11, "PRGn": 11, "PuOr": 11, "RdBu": 11,
-        "RdGy": 11, "RdYlBu": 11, "RdYlGn": 11, "Spectral": 11,
-        "Accent": 8, "Dark2": 8, "Paired": 12, "Pastel1": 9,
-        "Pastel2": 8, "Set1": 9, "Set2": 8, "Set3": 12,
-    }
-    max_n = _BREWER_MAXCOLORS.get(cmap_name, 9)
+    max_n = BREWER_MAXCOLORS.get(cmap_name, 9)
+    pal_data = BREWER.get(cmap_name, BREWER["Greens"])
 
     def _brewer_fun(n: int) -> list[str]:
-        from matplotlib.colors import to_hex as _to_hex
+        # R: brewer.pal(n, pal) returns the pre-designed n-colour subset.
+        # If n < 3, R returns the 3-colour subset (suppresses warning).
+        # If n > maxcolors, R returns maxcolors colours.
+        n_lookup = max(3, min(n, max_n))
 
-        cmap = plt.get_cmap(cmap_name)
+        # pal_data is {n: [colours]} — exact R brewer.pal(n, name) output
+        colours = list(pal_data.get(n_lookup, pal_data[max_n]))
 
-        # R: brewer.pal(n, pal) returns min(n, maxcolors) colours.
-        # Then pal[seq_len(n)] pads with NA for excess positions.
-        n_actual = min(n, max_n)
+        # Take first n colours (for n < 3 case)
+        colours = colours[:min(n, max_n)]
 
-        if n_actual < 3:
-            # R suppresses warning for < 3 and still returns 3 colors
-            n_sample = 3
-        else:
-            n_sample = n_actual
-
-        # Sample n_sample evenly-spaced colours from the colormap
-        positions = [i / max(n_sample - 1, 1) for i in range(n_sample)]
-        sampled = [
-            _to_hex(cmap(p), keep_alpha=False)
-            for p in positions
-        ]
-
-        # Take first n_actual colours
-        colours = sampled[:n_actual]
-
-        # R: pal[seq_len(n)] — pad with None (NA) if n > maxcolors
+        # Pad with None (NA) if n > maxcolors
         while len(colours) < n:
             colours.append(None)
 
@@ -671,17 +637,16 @@ def pal_viridis(
     -------
     DiscretePalette
     """
-    import matplotlib.pyplot as plt
+    from ._palettes_data import VIRIDIS
+    from ._colors import to_hex as _to_hex
 
     cmap_name = _VIRIDIS_OPTIONS.get(option, "viridis")
+    cmap_data = VIRIDIS.get(cmap_name, VIRIDIS["viridis"])  # 256 hex colors
+    n_cmap = len(cmap_data)
 
     def _viridis_fun(n: int) -> list[str]:
         if n == 0:
             return []
-        try:
-            cmap = plt.get_cmap(cmap_name)
-        except ValueError:
-            cmap = plt.get_cmap("viridis")
 
         if direction == -1:
             positions = np.linspace(end, begin, n)
@@ -690,26 +655,16 @@ def pal_viridis(
 
         colours: list[str] = []
         for pos in positions:
-            rgba = cmap(pos)
-            r, g, b = rgba[0], rgba[1], rgba[2]
-            a = alpha
-            if a < 1:
-                colours.append(
-                    "#{:02X}{:02X}{:02X}{:02X}".format(
-                        int(round(r * 255)),
-                        int(round(g * 255)),
-                        int(round(b * 255)),
-                        int(round(a * 255)),
-                    )
-                )
+            idx = min(int(round(pos * (n_cmap - 1))), n_cmap - 1)
+            idx = max(0, idx)
+            hex_col = cmap_data[idx]
+            if alpha < 1:
+                # Parse hex and add alpha
+                from ._colors import to_rgba as _to_rgba
+                r, g, b, _ = _to_rgba(hex_col)
+                colours.append(_to_hex((r, g, b, alpha), keep_alpha=True))
             else:
-                colours.append(
-                    "#{:02X}{:02X}{:02X}".format(
-                        int(round(r * 255)),
-                        int(round(g * 255)),
-                        int(round(b * 255)),
-                    )
-                )
+                colours.append(hex_col.lower())
         return colours
 
     return DiscretePalette(_viridis_fun, type="colour")

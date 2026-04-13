@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence, Union
 
-import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import to_hex, to_rgb, to_rgba
+
+from ._colors import to_hex, to_rgb, to_rgba
 from numpy.typing import ArrayLike
 
 __all__ = [
@@ -251,7 +251,13 @@ def alpha(
             new_alpha = rgba[3]
         else:
             new_alpha = float(a)
-        result.append(to_hex((*rgba[:3], new_alpha), keep_alpha=True))
+        # R's farver::encode_colour always includes alpha when provided,
+        # so force #RRGGBBAA format even for fully opaque.
+        r = int(round(rgba[0] * 255))
+        g = int(round(rgba[1] * 255))
+        b = int(round(rgba[2] * 255))
+        aa = int(round(new_alpha * 255))
+        result.append(f"#{r:02x}{g:02x}{b:02x}{aa:02x}")
 
     return result[0] if scalar_input and isinstance(alpha_value, (int, float)) else result
 
@@ -345,6 +351,14 @@ def show_col(
     ncol : int, optional
         Number of columns.  If *None*, a roughly square layout is chosen.
     """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        raise ImportError(
+            "show_col() requires matplotlib. Install with: "
+            "pip install scales_py[plot]"
+        )
+
     n = len(colours)
     if n == 0:
         return
@@ -371,7 +385,6 @@ def show_col(
                 spine.set_edgecolor(edge)
                 spine.set_linewidth(1 if borders else 0)
             if labels:
-                # Choose readable text colour
                 r, g, b = to_rgb(colours[idx])
                 lum = 0.299 * r + 0.587 * g + 0.114 * b
                 text_col = "white" if lum < 0.5 else "black"

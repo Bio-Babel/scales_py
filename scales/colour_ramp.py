@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Callable, List, Optional, Sequence, Union
 
 import numpy as np
-from matplotlib.colors import to_hex, to_rgba
+from ._colors import to_hex, to_rgba
 from numpy.typing import ArrayLike
 
 from .colour_manip import _lab_to_rgb, _rgb_to_lab

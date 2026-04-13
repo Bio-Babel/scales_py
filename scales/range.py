@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Optional, Sequence, Union
 
 import numpy as np
-import pandas as pd
 from numpy.typing import ArrayLike
 
 __all__ = [

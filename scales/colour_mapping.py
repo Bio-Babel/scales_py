@@ -39,22 +39,10 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# Brewer palette name lookup (matches R's RColorBrewer::brewer.pal.info)
+# Brewer palette name lookup (from embedded data)
 # ---------------------------------------------------------------------------
 
-_BREWER_PALETTES: dict[str, int] = {
-    # Sequential
-    "Blues": 9, "Greens": 9, "Greys": 9, "Oranges": 9, "Purples": 9,
-    "Reds": 9, "BuGn": 9, "BuPu": 9, "GnBu": 9, "OrRd": 9,
-    "PuBu": 9, "PuBuGn": 9, "PuRd": 9, "RdPu": 9, "YlGn": 9,
-    "YlGnBu": 9, "YlOrBr": 9, "YlOrRd": 9,
-    # Diverging
-    "BrBG": 11, "PiYG": 11, "PRGn": 11, "PuOr": 11, "RdBu": 11,
-    "RdGy": 11, "RdYlBu": 11, "RdYlGn": 11, "Spectral": 11,
-    # Qualitative
-    "Accent": 8, "Dark2": 8, "Paired": 12, "Pastel1": 9,
-    "Pastel2": 8, "Set1": 9, "Set2": 8, "Set3": 12,
-}
+from ._palettes_data import BREWER_MAXCOLORS as _BREWER_PALETTES
 
 _VIRIDIS_NAMES = {"viridis", "magma", "inferno", "plasma"}
 
