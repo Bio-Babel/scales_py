@@ -19,8 +19,8 @@ class TestCscale:
     def test_endpoint_colors(self):
         pal = scales.pal_gradient_n(["red", "blue"])
         result = scales.cscale([0, 0.5, 1], pal)
-        assert "FF0000" in result[0]
-        assert "0000FF" in result[2]
+        assert "ff0000" in result[0].lower()
+        assert "0000ff" in result[2].lower()
 
     def test_midpoint_color(self):
         pal = scales.pal_gradient_n(["red", "blue"])
@@ -224,8 +224,8 @@ class TestScaleEdgeCases:
         pal = scales.pal_gradient_n(["red", "blue"])
         result = scales.cscale([0, 1], pal)
         assert len(result) == 2
-        assert "FF0000" in result[0]
-        assert "0000FF" in result[1]
+        assert "ff0000" in result[0].lower()
+        assert "0000ff" in result[1].lower()
 
     def test_train_continuous_all_same(self):
         result = scales.train_continuous([5, 5, 5])

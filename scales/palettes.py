@@ -548,37 +548,53 @@ def pal_brewer(
     else:
         cmap_name = palette
 
+    # R: nlevels <- RColorBrewer::brewer.pal.info[pal, "maxcolors"]
+    _BREWER_MAXCOLORS: dict[str, int] = {
+        "Blues": 9, "BuGn": 9, "BuPu": 9, "GnBu": 9, "Greens": 9,
+        "Greys": 9, "Oranges": 9, "OrRd": 9, "PuBu": 9, "PuBuGn": 9,
+        "PuRd": 9, "Purples": 9, "RdPu": 9, "Reds": 9, "YlGn": 9,
+        "YlGnBu": 9, "YlOrBr": 9, "YlOrRd": 9,
+        "BrBG": 11, "PiYG": 11, "PRGn": 11, "PuOr": 11, "RdBu": 11,
+        "RdGy": 11, "RdYlBu": 11, "RdYlGn": 11, "Spectral": 11,
+        "Accent": 8, "Dark2": 8, "Paired": 12, "Pastel1": 9,
+        "Pastel2": 8, "Set1": 9, "Set2": 8, "Set3": 12,
+    }
+    max_n = _BREWER_MAXCOLORS.get(cmap_name, 9)
+
     def _brewer_fun(n: int) -> list[str]:
-        from matplotlib.colors import ListedColormap
-        try:
-            cmap = plt.get_cmap(cmap_name)
-        except ValueError:
-            cmap = plt.get_cmap(cmap_name, n)
+        from matplotlib.colors import to_hex as _to_hex
 
-        # R semantics differ by palette type:
-        #  - Qualitative (Set1, Set2, ...): return first n from the
-        #    predefined colour list (ListedColormap, N ≤ 12).
-        #  - Sequential / Diverging: return n evenly-spaced samples.
-        if isinstance(cmap, ListedColormap) and cmap.N <= 20:
-            # Qualitative: first n colours
-            positions = [i / max(cmap.N - 1, 1) for i in range(n)]
+        cmap = plt.get_cmap(cmap_name)
+
+        # R: brewer.pal(n, pal) returns min(n, maxcolors) colours.
+        # Then pal[seq_len(n)] pads with NA for excess positions.
+        n_actual = min(n, max_n)
+
+        if n_actual < 3:
+            # R suppresses warning for < 3 and still returns 3 colors
+            n_sample = 3
         else:
-            # Sequential / Diverging: evenly spaced
-            positions = [i / max(n - 1, 1) for i in range(n)]
+            n_sample = n_actual
 
-        colours = [
-            "#{:02X}{:02X}{:02X}".format(
-                int(round(c[0] * 255)),
-                int(round(c[1] * 255)),
-                int(round(c[2] * 255)),
-            )
-            for c in [cmap(p) for p in positions]
+        # Sample n_sample evenly-spaced colours from the colormap
+        positions = [i / max(n_sample - 1, 1) for i in range(n_sample)]
+        sampled = [
+            _to_hex(cmap(p), keep_alpha=False)
+            for p in positions
         ]
+
+        # Take first n_actual colours
+        colours = sampled[:n_actual]
+
+        # R: pal[seq_len(n)] — pad with None (NA) if n > maxcolors
+        while len(colours) < n:
+            colours.append(None)
+
         if direction == -1:
             colours = colours[::-1]
         return colours
 
-    return DiscretePalette(_brewer_fun, type="colour")
+    return DiscretePalette(_brewer_fun, type="colour", nlevels=max_n)
 
 
 def pal_hue(
@@ -891,64 +907,53 @@ def pal_gradient_n(
     space: str = "Lab",
 ) -> ContinuousPalette:
     """
-    Gradient through *n* colours.
+    Gradient through *n* colours, interpolated in CIELAB colour space.
 
     Parameters
     ----------
     colours : sequence of str
-        Hex colour strings defining the gradient stops.
+        Colour strings defining the gradient stops.
     values : sequence of float or None, optional
         Positions of each colour in ``[0, 1]``. If ``None``, colours are
         evenly spaced.
     space : str, optional
-        Colour interpolation space (default ``"Lab"``). Currently uses
-        matplotlib's ``LinearSegmentedColormap`` which interpolates in RGB;
-        ``"Lab"`` is accepted for API compatibility.
+        Colour interpolation space.  Must be ``"Lab"`` — other values
+        are deprecated (matching R scales >= 0.3.0).
 
     Returns
     -------
     ContinuousPalette
     """
-    from matplotlib.colors import LinearSegmentedColormap, to_rgba
+    from .colour_ramp import colour_ramp
 
-    n_colours = len(colours)
-    if n_colours < 2:
-        raise ValueError("pal_gradient_n requires at least 2 colours")
+    ramp = colour_ramp(colours)
 
-    if values is None:
-        values_arr = np.linspace(0.0, 1.0, n_colours)
-    else:
+    if values is not None:
         values_arr = np.asarray(values, dtype=float)
-        if len(values_arr) != n_colours:
+        if len(values_arr) != len(colours):
             raise ValueError(
                 f"Length of values ({len(values_arr)}) must match "
-                f"length of colours ({n_colours})"
+                f"length of colours ({len(colours)})"
             )
 
-    rgba_list = [to_rgba(c) for c in colours]
-    cmap = LinearSegmentedColormap.from_list(
-        "custom_gradient",
-        list(zip(values_arr, rgba_list)),
-    )
-
     def _gradient_fun(x: ArrayLike) -> list[str]:
-        x = np.asarray(x, dtype=float)
-        result: list[str] = []
-        for val in x.ravel():
-            if np.isnan(val):
-                result.append(None)  # type: ignore[arg-type]
-            else:
-                rgba = cmap(np.clip(val, 0.0, 1.0))
-                result.append(
-                    "#{:02X}{:02X}{:02X}".format(
-                        int(round(rgba[0] * 255)),
-                        int(round(rgba[1] * 255)),
-                        int(round(rgba[2] * 255)),
-                    )
-                )
-        return result
+        x_arr = np.asarray(x, dtype=float)
+        if x_arr.size == 0:
+            return []
+        if values is not None:
+            # Remap x through the custom value positions.
+            # R uses approxfun(values, xs) which returns NA for
+            # extrapolation (rule=1).  np.interp clamps, so we
+            # must manually set out-of-range values to NaN.
+            xs = np.linspace(0.0, 1.0, len(values_arr))
+            lo, hi = values_arr[0], values_arr[-1]
+            x_arr = np.where(
+                (x_arr < lo) | (x_arr > hi), np.nan,
+                np.interp(x_arr, values_arr, xs),
+            )
+        return ramp(x_arr)
 
-    return ContinuousPalette(_gradient_fun, type="colour", na_safe=True)
+    return ContinuousPalette(_gradient_fun, type="colour", na_safe=False)
 
 
 def pal_div_gradient(

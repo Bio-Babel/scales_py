@@ -260,9 +260,17 @@ class TestColMixEdge:
 # ---------------------------------------------------------------------------
 
 class TestColourRampEdge:
-    def test_too_few_colours(self):
+    def test_zero_colours(self):
         with pytest.raises(ValueError):
-            colour_ramp(["#FF0000"])
+            colour_ramp([])
+
+    def test_single_colour(self):
+        ramp = colour_ramp(["#FF0000"])
+        result = ramp([0.0, 0.5, 1.0])
+        assert len(result) == 3
+        for c in result:
+            assert c is not None
+            assert c.startswith("#ff0000")
 
     def test_no_alpha(self):
         ramp = colour_ramp(["#000000", "#FFFFFF"], alpha=False)

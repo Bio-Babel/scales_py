@@ -385,11 +385,16 @@ class TestColourRampSpecialValues:
         result = ramp(np.array([float("nan")]))
         assert result[0] is None
 
-    def test_inf_returns_colour(self):
+    def test_inf_returns_na(self):
+        # R: Inf is outside [0,1], approxfun returns NA → na_color
         ramp = scales.colour_ramp(["red", "blue"])
         result = ramp(np.array([float("inf")]))
-        # inf is out of [0,1] but implementation may clamp or return endpoint
-        assert isinstance(result[0], str)
+        assert result[0] is None
+
+    def test_neg_inf_returns_na(self):
+        ramp = scales.colour_ramp(["red", "blue"])
+        result = ramp(np.array([float("-inf")]))
+        assert result[0] is None
 
 
 class TestColourRampOpaqueNoAlpha:
@@ -402,10 +407,19 @@ class TestColourRampOpaqueNoAlpha:
         for c in result:
             assert len(c) == 7
 
-    def test_alpha_true(self):
+    def test_alpha_true_opaque(self):
+        # R: when alpha=TRUE but all inputs are fully opaque,
+        # output is #RRGGBB (no alpha suffix), same as alpha=FALSE.
         ramp = scales.colour_ramp(["red", "blue"], alpha=True)
         result = ramp(np.array([0.0, 1.0]))
-        # With alpha, hex strings should be 9 chars (#RRGGBBAA)
+        for c in result:
+            assert len(c) == 7
+
+    def test_alpha_true_with_transparency(self):
+        # R: when alpha=TRUE and inputs have varying alpha,
+        # output is #RRGGBBAA (with alpha suffix).
+        ramp = scales.colour_ramp(["#FF000080", "#0000FFFF"], alpha=True)
+        result = ramp(np.array([0.0, 1.0]))
         for c in result:
             assert len(c) == 9
 

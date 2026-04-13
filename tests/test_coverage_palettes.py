@@ -327,9 +327,12 @@ class TestPalDichromat:
 # ---------------------------------------------------------------------------
 
 class TestPalGradientNEdge:
-    def test_too_few_colours(self):
-        with pytest.raises(ValueError):
-            pal_gradient_n(["#FF0000"])
+    def test_single_colour(self):
+        pal = pal_gradient_n(["#FF0000"])
+        result = pal(np.array([0.0, 0.5, 1.0]))
+        assert len(result) == 3
+        for c in result:
+            assert c is not None
 
     def test_values_mismatch(self):
         with pytest.raises(ValueError):
