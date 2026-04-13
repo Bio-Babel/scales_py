@@ -13,6 +13,7 @@ callables mapping data values to hex colour strings:
 
 from __future__ import annotations
 
+import warnings
 from typing import (
     Any,
     Callable,
@@ -24,12 +25,11 @@ from typing import (
     Union,
 )
 
-import matplotlib
-import matplotlib.colors as mcolors
 import numpy as np
 from numpy.typing import ArrayLike
 
 from .colour_ramp import colour_ramp
+from .palettes import pal_brewer, pal_viridis
 
 __all__ = [
     "col_numeric",
@@ -38,78 +38,101 @@ __all__ = [
     "col_factor",
 ]
 
+# ---------------------------------------------------------------------------
+# Brewer palette name lookup (matches R's RColorBrewer::brewer.pal.info)
+# ---------------------------------------------------------------------------
+
+_BREWER_PALETTES: dict[str, int] = {
+    # Sequential
+    "Blues": 9, "Greens": 9, "Greys": 9, "Oranges": 9, "Purples": 9,
+    "Reds": 9, "BuGn": 9, "BuPu": 9, "GnBu": 9, "OrRd": 9,
+    "PuBu": 9, "PuBuGn": 9, "PuRd": 9, "RdPu": 9, "YlGn": 9,
+    "YlGnBu": 9, "YlOrBr": 9, "YlOrRd": 9,
+    # Diverging
+    "BrBG": 11, "PiYG": 11, "PRGn": 11, "PuOr": 11, "RdBu": 11,
+    "RdGy": 11, "RdYlBu": 11, "RdYlGn": 11, "Spectral": 11,
+    # Qualitative
+    "Accent": 8, "Dark2": 8, "Paired": 12, "Pastel1": 9,
+    "Pastel2": 8, "Set1": 9, "Set2": 8, "Set3": 12,
+}
+
+_VIRIDIS_NAMES = {"viridis", "magma", "inferno", "plasma"}
+
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Internal helpers (matching R's safePaletteFunc / toPaletteFunc dispatch)
 # ---------------------------------------------------------------------------
 
 def _to_palette_func(
-    pal: Union[str, Sequence[str]],
-    n: Optional[int] = None,
+    pal: Union[str, Sequence[str], Callable],
+    alpha: bool = True,
+    nlevels: Optional[int] = None,
 ) -> Callable[[ArrayLike], List[str]]:
     """
-    Convert a palette specification to a callable ramp function.
+    Convert a palette specification to a callable ramp over [0, 1].
+
+    Matches R's ``toPaletteFunc`` S3 dispatch:
+    - A single string that is a Brewer palette name → sample colours, pass
+      through ``colour_ramp`` (LAB interpolation).
+    - A single string that is a viridis option → sample 256 colours, pass
+      through ``colour_ramp``.
+    - A character vector of colours → pass through ``colour_ramp``.
+    - A callable → use as-is.
 
     Parameters
     ----------
-    pal : str or sequence of str
-        Either the name of a matplotlib colourmap (e.g. ``"Blues"``,
-        ``"viridis"``) or an explicit list of colour strings.
-    n : int, optional
-        Number of discrete colours to sample when *pal* is a colourmap name.
-        Not used when *pal* is already a list of colours.
-
-    Returns
-    -------
-    callable
-        A function that maps an array of floats in [0, 1] to hex strings.
+    pal : str, sequence of str, or callable
+        Palette specification.
+    alpha : bool
+        Whether to include alpha channel in interpolation.
+    nlevels : int or None
+        Number of levels (used for Brewer palette sampling).
     """
+    if callable(pal) and not isinstance(pal, (str, list, tuple)):
+        return pal
+
     if isinstance(pal, str):
-        cmap = matplotlib.colormaps.get_cmap(pal)
+        if pal in _BREWER_PALETTES:
+            # R: sample all maxcolors or abs(nlevels) colours
+            max_n = _BREWER_PALETTES[pal]
+            if nlevels is not None:
+                n_sample = min(abs(nlevels), max_n)
+            else:
+                n_sample = max_n
+            colors = pal_brewer(palette=pal)(n_sample)
+            colors = [c for c in colors if c is not None]
+            return colour_ramp(colors, alpha=alpha)
+        elif pal in _VIRIDIS_NAMES:
+            colors = pal_viridis(option=pal)(256)
+            return colour_ramp(colors, alpha=alpha)
+        else:
+            # Try as a single colour string
+            pal = [pal]
 
-        def _cmap_ramp(x: ArrayLike) -> List[str]:
-            x = np.asarray(x, dtype=float)
-            result: List[str] = []
-            for val in x.flat:
-                if np.isnan(val):
-                    result.append(None)  # type: ignore[arg-type]
-                else:
-                    rgba = cmap(np.clip(val, 0.0, 1.0))
-                    result.append(mcolors.to_hex(rgba, keep_alpha=True))
-            return result
-
-        return _cmap_ramp
-    else:
-        return colour_ramp(list(pal))
+    # List of colours
+    return colour_ramp(list(pal), alpha=alpha)
 
 
 def _safe_palette_func(
-    pal: Union[str, Sequence[str]],
+    pal: Union[str, Sequence[str], Callable],
     na_color: str,
-    n: Optional[int] = None,
+    alpha: bool = True,
+    nlevels: Optional[int] = None,
 ) -> Callable[[ArrayLike], List[str]]:
     """
-    Wrap a palette function with NA handling.
+    Wrap a palette function with NA handling and range filtering.
 
-    Missing / out-of-domain values are replaced by *na_color*.
-
-    Parameters
-    ----------
-    pal : str or sequence of str
-        Palette specification (see :func:`_to_palette_func`).
-    na_color : str
-        Hex colour for missing values.
-    n : int, optional
-        Forwarded to :func:`_to_palette_func`.
-
-    Returns
-    -------
-    callable
-        Palette function with NA safety.
+    Matches R's ``safePaletteFunc``: composes filterRange → filterNA →
+    filterZeroLength → filterRGB → toPaletteFunc.
     """
-    ramp = _to_palette_func(pal, n=n)
+    ramp = _to_palette_func(pal, alpha=alpha, nlevels=nlevels)
 
     def _safe(x: ArrayLike) -> List[str]:
+        x = np.asarray(x, dtype=float)
+        if x.size == 0:
+            return []
+        # filterRange: out-of-[0,1] → NaN
+        x = np.where((x < 0) | (x > 1), np.nan, x)
         result = ramp(x)
         return [na_color if c is None else c for c in result]
 
@@ -163,6 +186,7 @@ def col_numeric(
     palette: Union[str, Sequence[str]],
     domain: Optional[Tuple[float, float]] = None,
     na_color: str = "#808080",
+    alpha: bool = False,
     reverse: bool = False,
 ) -> Callable[[ArrayLike], List[str]]:
     """
@@ -171,13 +195,16 @@ def col_numeric(
     Parameters
     ----------
     palette : str or sequence of str
-        Colourmap name (e.g. ``"Blues"``, ``"viridis"``) or a list of
-        colour strings defining the ramp.
+        Colourmap name (e.g. ``"Blues"``, ``"Greens"``, ``"viridis"``) or
+        a list of colour strings defining the ramp.
     domain : tuple of (float, float), optional
         ``(min, max)`` of the data domain.  If *None*, the domain is
         inferred from the first call.
     na_color : str, default "#808080"
         Colour for missing / ``NaN`` values.
+    alpha : bool, default False
+        If *True*, alpha channels in the palette colours are included
+        in interpolation and output.
     reverse : bool, default False
         Reverse the palette direction.
 
@@ -192,7 +219,7 @@ def col_numeric(
     >>> f([0, 50, 100])  # doctest: +SKIP
     ['#ffffffff', '#ff8080ff', '#ff0000ff']
     """
-    ramp = _safe_palette_func(palette, na_color)
+    ramp = _safe_palette_func(palette, na_color, alpha=alpha)
 
     # Mutable state for auto-domain
     state: Dict[str, Any] = {
@@ -212,8 +239,13 @@ def col_numeric(
         scaled = _rescale(x, lo, hi)
         if reverse:
             scaled = 1.0 - scaled
-        # Clamp to [0, 1]; NaN stays NaN
-        scaled = np.where(np.isnan(scaled), np.nan, np.clip(scaled, 0, 1))
+        # R: warn when values are outside the color scale
+        if np.any((scaled < 0) | (scaled > 1), where=~np.isnan(scaled)):
+            warnings.warn(
+                "Some values were outside the color scale and will be "
+                "treated as NA",
+                stacklevel=2,
+            )
         return ramp(scaled)
 
     return _map
@@ -225,6 +257,7 @@ def col_bin(
     bins: Union[int, Sequence[float]] = 7,
     pretty: bool = True,
     na_color: str = "#808080",
+    alpha: bool = False,
     reverse: bool = False,
     right: bool = False,
 ) -> Callable[[ArrayLike], List[str]]:
@@ -243,6 +276,8 @@ def col_bin(
         Use "pretty" breakpoints when *bins* is an integer.
     na_color : str, default "#808080"
         Colour for missing values.
+    alpha : bool, default False
+        If *True*, preserve alpha channels in interpolation.
     reverse : bool, default False
         Reverse palette direction.
     right : bool, default False
@@ -254,83 +289,150 @@ def col_bin(
     callable
         ``f(x)`` mapping numeric array to a list of hex colour strings.
     """
+    # R: autobin = is.null(domain) && length(bins) == 1
+    autobin = domain is None and isinstance(bins, int)
+
     state: Dict[str, Any] = {
         "breaks": None,
-        "ramp": None,
     }
 
-    def _ensure_breaks(x: np.ndarray) -> np.ndarray:
-        if state["breaks"] is not None:
-            return state["breaks"]
-
-        if not isinstance(bins, int):
-            state["breaks"] = np.sort(np.asarray(bins, dtype=float))
-            return state["breaks"]
-
-        # Need domain
-        dom = domain
-        if dom is None:
-            finite = x[np.isfinite(x)]
-            if len(finite) == 0:
-                state["breaks"] = np.array([0.0, 1.0])
-                return state["breaks"]
-            dom = (float(finite.min()), float(finite.max()))
-
-        if pretty:
-            state["breaks"] = _pretty_breaks(dom[0], dom[1], bins)
-        else:
-            state["breaks"] = np.linspace(dom[0], dom[1], bins + 1)
-        return state["breaks"]
+    if not isinstance(bins, int) and domain is None:
+        # R: explicit breaks don't need a domain
+        state["breaks"] = np.sort(np.asarray(bins, dtype=float))
+    elif domain is not None:
+        state["breaks"] = _get_bins(domain, None, bins, pretty)
 
     def _map(x: ArrayLike) -> List[str]:
-        x = np.asarray(x, dtype=float)
-        breaks = _ensure_breaks(x)
+        x = np.atleast_1d(np.asarray(x, dtype=float))
+
+        if x.size == 0 or np.all(np.isnan(x)):
+            return [na_color] * x.size
+
+        breaks = state["breaks"]
+        if breaks is None:
+            breaks = _get_bins(None, x, bins, pretty)
+            state["breaks"] = breaks
+
         n_bins = len(breaks) - 1
         if n_bins < 1:
             return [na_color] * x.size
 
-        if state["ramp"] is None:
-            state["ramp"] = _safe_palette_func(palette, na_color)
+        # R: col_bin delegates to col_factor(palette, domain=1:numColors, ...)
+        # This creates a discrete color mapping with exactly numColors colors.
+        color_func = col_factor(
+            palette,
+            domain=[str(i) for i in range(1, n_bins + 1)],
+            na_color=na_color,
+            alpha=alpha,
+            reverse=reverse,
+        )
 
-        ramp = state["ramp"]
+        # R: cut(x, breaks, labels=FALSE, include.lowest=TRUE, right=right)
+        ints = _cut(x, breaks, include_lowest=True, right=right)
 
-        # Digitize: find bin index for each value
-        if right:
-            indices = np.digitize(x, breaks, right=True)
-        else:
-            indices = np.digitize(x, breaks, right=False)
-
-        # Map bin indices to [0, 1] palette positions
+        # Map bin labels through col_factor
+        labels = [str(int(v)) if not np.isnan(v) else "NA" for v in ints]
         result: List[str] = []
-        for i, val in enumerate(x.flat):
-            if np.isnan(val):
+        for lab, val in zip(labels, x.flat):
+            if np.isnan(val) or lab == "NA":
                 result.append(na_color)
-                continue
-
-            idx = int(indices.flat[i])
-            # digitize with right=False: bin 0 means below first break,
-            # bin len(breaks) means above last break.
-            if right:
-                if idx < 1 or idx > n_bins:
-                    result.append(na_color)
-                    continue
-                bin_idx = idx - 1
             else:
-                if idx < 1 or idx > n_bins:
-                    result.append(na_color)
-                    continue
-                bin_idx = idx - 1
-
-            # Centre of the bin mapped to [0, 1]
-            frac = (bin_idx + 0.5) / n_bins
-            if reverse:
-                frac = 1.0 - frac
-            colors = ramp(np.array([frac]))
-            result.append(colors[0])
+                mapped = color_func([lab])
+                result.append(mapped[0])
 
         return result
 
     return _map
+
+
+def _get_bins(
+    domain: Optional[Tuple[float, float]],
+    x: Optional[np.ndarray],
+    bins: Union[int, Sequence[float]],
+    pretty: bool,
+) -> np.ndarray:
+    """Compute bin breakpoints (R's ``getBins``)."""
+    if not isinstance(bins, int):
+        return np.sort(np.asarray(bins, dtype=float))
+    if bins < 2:
+        raise ValueError(f"Invalid bins value ({bins}); bin count must be at least 2")
+
+    if domain is not None:
+        ref = np.asarray(domain, dtype=float)
+    elif x is not None:
+        ref = x[np.isfinite(x)]
+    else:
+        raise ValueError("domain and x can't both be None")
+
+    if len(ref) == 0:
+        return np.array([0.0, 1.0])
+
+    if pretty:
+        return _pretty_breaks(float(ref.min()), float(ref.max()), bins)
+    else:
+        return np.linspace(float(ref.min()), float(ref.max()), bins + 1)
+
+
+def _cut(
+    x: np.ndarray,
+    breaks: np.ndarray,
+    include_lowest: bool = True,
+    right: bool = False,
+) -> np.ndarray:
+    """
+    Bin values into integer labels (R's ``cut(..., labels=FALSE)``).
+
+    Returns 1-based bin indices; NaN for values outside the breaks range.
+    """
+    n_bins = len(breaks) - 1
+    result = np.full(x.shape, np.nan, dtype=float)
+
+    for i in range(x.size):
+        val = x.flat[i]
+        if np.isnan(val):
+            continue
+
+        assigned = False
+        for b in range(n_bins):
+            lo, hi = breaks[b], breaks[b + 1]
+
+            if right:
+                # (lo, hi] — right-closed
+                in_bin = (val > lo) and (val <= hi)
+                # include.lowest: first bin becomes [lo, hi]
+                if include_lowest and b == 0:
+                    in_bin = (val >= lo) and (val <= hi)
+            else:
+                # [lo, hi) — left-closed
+                in_bin = (val >= lo) and (val < hi)
+                # include.lowest: last bin becomes [lo, hi]
+                if include_lowest and b == n_bins - 1:
+                    in_bin = (val >= lo) and (val <= hi)
+
+            if in_bin:
+                result.flat[i] = b + 1  # 1-based
+                assigned = True
+                break
+
+        # not assigned → outside range → stays NaN
+
+    return result
+
+
+def _safe_quantile(
+    x: np.ndarray,
+    probs: np.ndarray,
+    n_requested: int,
+) -> np.ndarray:
+    """R's ``safe_quantile``: deduplicate and warn on skewed data."""
+    bins = np.unique(np.quantile(x, probs))
+    if len(bins) < len(probs):
+        warnings.warn(
+            f"Skewed data means we can only allocate {len(bins)} unique "
+            f"colours not the {n_requested} requested",
+            stacklevel=3,
+        )
+    return bins
 
 
 def col_quantile(
@@ -339,6 +441,7 @@ def col_quantile(
     n: int = 4,
     probs: Optional[Sequence[float]] = None,
     na_color: str = "#808080",
+    alpha: bool = False,
     reverse: bool = False,
     right: bool = False,
 ) -> Callable[[ArrayLike], List[str]]:
@@ -375,11 +478,13 @@ def col_quantile(
 
     state: Dict[str, Any] = {"breaks": None}
 
+    n_requested = len(probs_arr) - 1
+
     if domain is not None:
         domain_arr = np.asarray(domain, dtype=float)
         finite = domain_arr[np.isfinite(domain_arr)]
         if len(finite) > 0:
-            state["breaks"] = np.unique(np.quantile(finite, probs_arr))
+            state["breaks"] = _safe_quantile(finite, probs_arr, n_requested)
 
     def _map(x: ArrayLike) -> List[str]:
         x = np.asarray(x, dtype=float)
@@ -388,13 +493,14 @@ def col_quantile(
             finite = x[np.isfinite(x)]
             if len(finite) == 0:
                 return [na_color] * x.size
-            state["breaks"] = np.unique(np.quantile(finite, probs_arr))
+            state["breaks"] = _safe_quantile(finite, probs_arr, n_requested)
 
         # Delegate to col_bin with the computed breaks
         mapper = col_bin(
             palette,
             bins=state["breaks"],
             na_color=na_color,
+            alpha=alpha,
             reverse=reverse,
             right=right,
         )
@@ -409,6 +515,7 @@ def col_factor(
     levels: Optional[Sequence[str]] = None,
     ordered: bool = False,
     na_color: str = "#808080",
+    alpha: bool = False,
     reverse: bool = False,
 ) -> Callable[[Union[ArrayLike, Sequence[str]]], List[str]]:
     """
@@ -456,11 +563,17 @@ def col_factor(
             state["colors"] = {}
             return state["colors"]
 
-        ramp = _safe_palette_func(palette, na_color)
+        # R: safePaletteFunc(palette, na.color, alpha,
+        #        nlevels = length(lvls) * ifelse(reverse, -1, 1))
+        nlevels = n * (-1 if reverse else 1)
+        ramp = _safe_palette_func(
+            palette, na_color, alpha=alpha, nlevels=nlevels
+        )
 
         if n == 1:
             positions = np.array([0.5])
         else:
+            # R: rescale(as.integer(x), from = c(1, length(lvls)))
             positions = np.linspace(0, 1, n)
 
         hex_colors = ramp(positions)
@@ -475,12 +588,16 @@ def col_factor(
             labels = [str(v) for v in x]
 
         if state["levels"] is None:
-            # Discover levels from unique values, preserving first-seen order
+            # R: calcLevels — ordered preserves insertion order,
+            # unordered sorts alphabetically.
             seen: Dict[str, None] = {}
             for lab in labels:
                 if lab not in seen:
                     seen[lab] = None
-            state["levels"] = list(seen.keys())
+            discovered = list(seen.keys())
+            if not ordered:
+                discovered = sorted(discovered)
+            state["levels"] = discovered
 
         color_map = _ensure_colors(labels)
         return [color_map.get(lab, na_color) for lab in labels]

@@ -417,15 +417,14 @@ class TestZeroRange:
     def test_different_values(self):
         assert not scales.zero_range((0, 1))
 
-    def test_nan_returns_true(self):
-        # NaN means unknown, treated as zero range
-        assert scales.zero_range((float("nan"), 1))
+    def test_nan_returns_false(self):
+        # R returns NA for NaN inputs. In Python we return False
+        # so downstream `if zero_range(...)` takes the safe (non-zero) path.
+        assert not scales.zero_range((float("nan"), 1))
 
     def test_both_nan(self):
-        result = scales.zero_range((float("nan"), float("nan")))
-        # Either True or NaN-ish; the R scales returns NA
-        # In Python, this should be truthy
-        assert result
+        # R returns NA; Python returns False for NaN inputs.
+        assert not scales.zero_range((float("nan"), float("nan")))
 
     def test_both_zero(self):
         assert scales.zero_range((0, 0))
