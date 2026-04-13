@@ -412,7 +412,14 @@ def col_mix(
     -------
     str
         Mixed colour as a hex string.
+
+    Raises
+    ------
+    ValueError
+        If *amount* is not in [0, 1].
     """
+    if not (0.0 <= amount <= 1.0):
+        raise ValueError(f"amount must be between 0 and 1, got {amount}")
     rgba_a = to_rgba(a)
     rgba_b = to_rgba(b)
 
@@ -454,22 +461,29 @@ def col_shift(col: str, amount: float = 10) -> str:
 
 def col_lighter(col: str, amount: float = 10) -> str:
     """
-    Increase the luminance of a colour.
+    Increase the lightness of a colour in HSL space.
+
+    Matches R's ``farver::add_to_channel(col, "l", amount, space = "hsl")``.
 
     Parameters
     ----------
     col : str
         A colour specification.
     amount : float, default 10
-        Amount to add to luminance (*L* in CIELAB).
+        Amount to add to lightness (HSL *L*, range 0–100).
 
     Returns
     -------
     str
         Lighter colour as a hex string.
     """
-    h, c, l, a = _hex_to_hcl(col)
-    return _hcl_to_hex(h, c, max(0, min(100, l + amount)), a)
+    import colorsys
+    rgba = to_rgba(col)
+    h, l, s = colorsys.rgb_to_hls(rgba[0], rgba[1], rgba[2])
+    # HSL L is [0,1], R uses [0,100] scale for amount
+    l = max(0.0, min(1.0, l + amount / 100.0))
+    r, g, b = colorsys.hls_to_rgb(h, l, s)
+    return to_hex((r, g, b, rgba[3]), keep_alpha=True)
 
 
 def col_darker(col: str, amount: float = 10) -> str:
@@ -495,19 +509,26 @@ def col_darker(col: str, amount: float = 10) -> str:
 
 def col_saturate(col: str, amount: float = 10) -> str:
     """
-    Increase the chroma (saturation) of a colour.
+    Increase the saturation of a colour in HSL space.
+
+    Matches R's ``farver::add_to_channel(col, "s", amount, space = "hsl")``.
 
     Parameters
     ----------
     col : str
         A colour specification.
     amount : float, default 10
-        Amount to add to chroma.
+        Amount to add to saturation (HSL *S*, range 0–100).
 
     Returns
     -------
     str
         More saturated colour as a hex string.
     """
-    h, c, l, a = _hex_to_hcl(col)
-    return _hcl_to_hex(h, max(0, c + amount), l, a)
+    import colorsys
+    rgba = to_rgba(col)
+    h, l, s = colorsys.rgb_to_hls(rgba[0], rgba[1], rgba[2])
+    # HSL S is [0,1], R uses [0,100] scale for amount
+    s = max(0.0, min(1.0, s + amount / 100.0))
+    r, g, b = colorsys.hls_to_rgb(h, l, s)
+    return to_hex((r, g, b, rgba[3]), keep_alpha=True)

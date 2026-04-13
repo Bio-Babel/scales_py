@@ -67,9 +67,11 @@ def zero_range(
     if x.shape != (2,):
         raise ValueError("x must have exactly 2 elements")
 
-    # NA / NaN handling – mirror R: any NA → NA, which we map to True
+    # R returns NA for NaN inputs (which causes an error in `if`).
+    # In Python, returning True would incorrectly treat NaN ranges as
+    # zero-width.  Return False so downstream code takes the safe path.
     if np.any(np.isnan(x)):
-        return True
+        return False
 
     # Both the same (including both +Inf or both -Inf)
     if x[0] == x[1]:

@@ -17,12 +17,12 @@ class TestZeroRange:
     def test_different_values(self):
         assert not scales.zero_range((0, 1))
 
-    def test_nan_returns_truthy(self):
-        # NaN signals unknown, conventionally treated as zero range
-        assert scales.zero_range((float("nan"), 1))
+    def test_nan_returns_false(self):
+        # R returns NA; Python returns False for safety
+        assert not scales.zero_range((float("nan"), 1))
 
     def test_both_nan(self):
-        assert scales.zero_range((float("nan"), float("nan")))
+        assert not scales.zero_range((float("nan"), float("nan")))
 
     def test_both_zero(self):
         assert scales.zero_range((0, 0))
