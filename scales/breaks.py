@@ -149,33 +149,54 @@ def _extended(
     best_score = -2.0
     best: Optional[np.ndarray] = None
 
+    # R (labeling::extended) iterates ``z`` over integers with
+    # ``step = j * q * 10^z`` and increments z until the coverage bound
+    # falls below the current best.  An earlier Python version iterated
+    # ``r_mul in (1, 2, 5, 10, 20, 50, 100)`` with ``base = 10^floor(log10(delta))``
+    # — that made the *same* numeric step reachable under multiple q
+    # values (e.g. step=2 under both q=1 and q=2), letting the algorithm
+    # borrow a better simplicity score from the wrong q.  Result: for
+    # ``(0, 6)`` Python picked ``[0,2,4,6]`` instead of R's ``[0,1,...,6]``.
     j = 1
     while j < 50:
+        broken_j = False
         for q_idx, q in enumerate(Q):
             sm = _simplicity_max(q_idx, n_Q, j)
             if (w[0] * sm + w[1] + w[2] + w[3]) < best_score:
                 # Outer loop can't beat best; done with j
-                j = 50  # break outer
+                broken_j = True
                 break
 
-            for k in range(2, 50):
+            k = 2
+            while k < 50:
                 dm = _density_max(k, n)
                 if (w[0] * sm + w[1] + w[2] * dm + w[3]) < best_score:
                     break
 
                 delta = (dmax - dmin) / (k + 1) / j / q
-                base = 1.0 if delta == 0 else 10.0 ** math.floor(math.log10(delta))
+                if delta <= 0:
+                    k += 1
+                    continue
+                z = int(math.ceil(math.log10(delta)))
 
-                for r_mul in (1, 2, 5, 10, 20, 50, 100):
-                    step = j * q * r_mul * base
+                while z < 50:
+                    step = j * q * (10.0 ** z)
                     if step < 1e-100:
+                        z += 1
                         continue
 
-                    lmin_start = int(math.floor(dmax / step)) - (k - 1)
-                    lmin_end = int(math.ceil(dmin / step))
+                    cm = _coverage_max(dmin, dmax, step * (k - 1))
+                    if (w[0] * sm + w[1] * cm + w[2] * dm + w[3]) < best_score:
+                        break
 
-                    for i in range(lmin_start, lmin_end + 1):
-                        lmin = i * step
+                    min_start = math.floor(dmax / step) * j - (k - 1) * j
+                    max_start = math.ceil(dmin / step) * j
+                    if min_start > max_start:
+                        z += 1
+                        continue
+
+                    for start in range(int(min_start), int(max_start) + 1):
+                        lmin = start * (step / j)
                         lmax = lmin + step * (k - 1)
 
                         if only_loose:
@@ -193,8 +214,11 @@ def _extended(
                         if score > best_score:
                             best_score = score
                             best = np.arange(lmin, lmax + step * 0.5, step)
-                            # Trim to exact k labels
                             best = best[:k]
+                    z += 1
+                k += 1
+        if broken_j:
+            break
         j += 1
 
     if best is None:
